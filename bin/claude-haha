@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Always use the global .env file
+ENV_FILE="$ROOT_DIR/.env"
+PRELOAD_FILE="$ROOT_DIR/preload.ts"
 
 # Force recovery CLI (simple readline REPL, no Ink TUI)
 if [[ "${CLAUDE_CODE_FORCE_RECOVERY_CLI:-0}" == "1" ]]; then
-  exec bun --env-file=.env ./src/localRecoveryCli.ts "$@"
+  exec bun --preload="$PRELOAD_FILE" --env-file="$ENV_FILE" "$ROOT_DIR/src/localRecoveryCli.ts" "$@"
 fi
 
 # Default: full CLI with Ink TUI
-exec bun --env-file=.env ./src/entrypoints/cli.tsx "$@"
+exec bun --preload="$PRELOAD_FILE" --env-file="$ENV_FILE" "$ROOT_DIR/src/entrypoints/cli.tsx" "$@"
