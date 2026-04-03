@@ -1477,3 +1477,104 @@ export function getAllMemoryFilePaths(
 
   return Array.from(paths)
 }
+
+/**
+ * Read memory content from a specific branch.
+ * Used for cross-branch memory reference.
+ *
+ * @param branchName - The branch name to read from
+ * @param type - The type of memory to read ('AutoMem' or 'TeamMem')
+ * @returns MemoryFileInfo if found, null otherwise
+ */
+export async function readBranchMemory(
+  branchName: string,
+  type: 'AutoMem' | 'TeamMem' = 'AutoMem',
+): Promise<MemoryFileInfo | null> {
+  const {
+    getBranchMemoryPath,
+    getTeamMemPath,
+    isTeamMemoryEnabled,
+  } = await import('../memdir/paths.js')
+
+  let memoryPath: string | null
+  if (type === 'TeamMem') {
+    if (!isTeamMemoryEnabled()) {
+      return null
+    }
+    // Team memory is always under the branch-specific auto-memory dir
+    const branchPath = getBranchMemoryPath(branchName)
+    if (!branchPath) return null
+    memoryPath = join(branchPath, 'team', 'MEMORY.md')
+  } else {
+    memoryPath = join(getBranchMemoryPath(branchName) ?? '', 'MEMORY.md')
+  }
+
+  if (!memoryPath) return null
+
+  const fs = getFsImplementation()
+  try {
+    const content = await fs.readFile(memoryPath, 'utf-8')
+    if (!content.trim()) return null
+
+    return {
+      path: memoryPath,
+      type,
+      content: content.trim(),
+      exists: true,
+    }
+  } catch (error) {
+    const code = getErrnoCode(error)
+    if (code !== 'ENOENT' && code !== 'EISDIR') {
+      logForDebugging(`Failed to read branch memory: ${error}`)
+    }
+    return null
+  }
+}
+
+/**
+ * Get information about available branch memories.
+ */
+export async function getBranchMemoryInfo(): Promise<
+  Array<{ branch: string; hasMemory: boolean; hasTeamMemory: boolean }>
+> {
+  const { listBranchMemories, getBranchMemoryPath } = await import(
+    '../memdir/paths.js'
+  )
+  const fs = getFsImplementation()
+
+  const branches = await listBranchMemories()
+  const infos: Array<{
+    branch: string
+    hasMemory: boolean
+    hasTeamMemory: boolean
+  }> = []
+
+  for (const branch of branches) {
+    const branchPath = getBranchMemoryPath(branch)
+    if (!branchPath) continue
+
+    const memoryPath = join(branchPath, 'MEMORY.md')
+    const teamMemoryPath = join(branchPath, 'team', 'MEMORY.md')
+
+    let hasMemory = false
+    let hasTeamMemory = false
+
+    try {
+      const stats = await fs.stat(memoryPath)
+      hasMemory = stats.isFile()
+    } catch {
+      // File doesn't exist
+    }
+
+    try {
+      const stats = await fs.stat(teamMemoryPath)
+      hasTeamMemory = stats.isFile()
+    } catch {
+      // File doesn't exist
+    }
+
+    infos.push({ branch, hasMemory, hasTeamMemory })
+  }
+
+  return infos
+}

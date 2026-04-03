@@ -11,12 +11,13 @@ import {
   isEnvDefinedFalsy,
   isEnvTruthy,
 } from '../utils/envUtils.js'
-import { findCanonicalGitRoot } from '../utils/git.js'
+import { findCanonicalGitRoot, getCurrentBranchSync } from '../utils/git.js'
 import { sanitizePath } from '../utils/path.js'
 import {
   getInitialSettings,
   getSettingsForSource,
 } from '../utils/settings/settings.js'
+import { getFsImplementation } from '../utils/fsOperations.js'
 
 /**
  * Whether auto-memory features are enabled (memdir, agent memory, past session search).
@@ -91,6 +92,33 @@ export function getMemoryBaseDir(): string {
 
 const AUTO_MEM_DIRNAME = 'memory'
 const AUTO_MEM_ENTRYPOINT_NAME = 'MEMORY.md'
+
+/**
+ * Get the current git branch name, sanitized for use in file paths.
+ * Returns null if not in a git repo or on detached HEAD.
+ * Branch names are sanitized to replace unsafe characters with dashes.
+ */
+function getCurrentBranchSanitized(): string | null {
+  const branch = getCurrentBranchSync()
+  if (!branch || branch === 'HEAD' || branch === '') {
+    return null
+  }
+  // Sanitize branch name: replace / with --, and other unsafe chars with -
+  return branch
+    .replace(/\//g, '--')  // Preserve / structure as --
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .slice(0, 100)  // Max length
+}
+
+/**
+ * Check if branch-specific memory is enabled.
+ * Controlled by CLAUDE_CODE_BRANCH_MEMORY env var (1/true → enabled).
+ * Default: disabled for backwards compatibility.
+ */
+function isBranchMemoryEnabled(): boolean {
+  const envVal = process.env.CLAUDE_CODE_BRANCH_MEMORY
+  return isEnvTruthy(envVal)
+}
 
 /**
  * Normalize and validate a candidate auto-memory directory path.
@@ -201,7 +229,19 @@ export function hasAutoMemPathOverride(): boolean {
  * same repo share one auto-memory directory (anthropics/claude-code#24382).
  */
 function getAutoMemBase(): string {
-  return findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot()
+  return findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot
+}
+
+/**
+ * Get the branch-specific memory path suffix.
+ * Returns 'shared' if branch memory is disabled or not in a git repo.
+ */
+function getBranchMemorySuffix(): string {
+  if (!isBranchMemoryEnabled()) {
+    return 'shared'
+  }
+  const branch = getCurrentBranchSanitized()
+  return branch ?? 'shared'
 }
 
 /**
@@ -210,13 +250,15 @@ function getAutoMemBase(): string {
  * Resolution order:
  *   1. CLAUDE_COWORK_MEMORY_PATH_OVERRIDE env var (full-path override, used by Cowork)
  *   2. autoMemoryDirectory in settings.json (trusted sources only: policy/local/user)
- *   3. <memoryBase>/projects/<sanitized-git-root>/memory/
+ *   3. <memoryBase>/projects/<sanitized-git-root>/<branch>/memory/
  *      where memoryBase is resolved by getMemoryBaseDir()
+ *      and branch is 'shared' by default or the sanitized branch name if
+ *      CLAUDE_CODE_BRANCH_MEMORY=1
  *
  * Memoized: render-path callers (collapseReadSearchGroups → isAutoManagedMemoryFile)
  * fire per tool-use message per Messages re-render; each miss costs
  * getSettingsForSource × 4 → parseSettingsFile (realpathSync + readFileSync).
- * Keyed on projectRoot so tests that change its mock mid-block recompute;
+ * Keyed on projectRoot + branch so tests that change its mock mid-block recompute;
  * env vars / settings.json / CLAUDE_CONFIG_DIR are session-stable in
  * production and covered by per-test cache.clear.
  */
@@ -227,11 +269,12 @@ export const getAutoMemPath = memoize(
       return override
     }
     const projectsDir = join(getMemoryBaseDir(), 'projects')
+    const branchSuffix = getBranchMemorySuffix()
     return (
-      join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME) + sep
+      join(projectsDir, sanitizePath(getAutoMemBase()), branchSuffix, AUTO_MEM_DIRNAME) + sep
     ).normalize('NFC')
   },
-  () => getProjectRoot(),
+  () => getProjectRoot() + ':' + getBranchMemorySuffix(),
 )
 
 /**
@@ -275,4 +318,61 @@ export function isAutoMemPath(absolutePath: string): boolean {
   // SECURITY: Normalize to prevent path traversal bypasses via .. segments
   const normalizedPath = normalize(absolutePath)
   return normalizedPath.startsWith(getAutoMemPath())
+}
+
+/**
+ * Get the auto-memory directory path for a specific branch.
+ * Used for cross-branch memory reading.
+ * Returns null if branch memory is not enabled.
+ */
+export function getBranchMemoryPath(branchName: string): string | null {
+  if (!isBranchMemoryEnabled()) {
+    return null
+  }
+  const override = getAutoMemPathOverride() ?? getAutoMemPathSetting()
+  if (override) {
+    // For override paths, append branch suffix
+    return join(override, 'branches', sanitizePath(branchName)) + sep
+  }
+  const projectsDir = join(getMemoryBaseDir(), 'projects')
+  const sanitizedBranch = sanitizePath(branchName.replace(/\//g, '--'))
+  return (
+    join(projectsDir, sanitizePath(getAutoMemBase()), 'branches', sanitizedBranch, AUTO_MEM_DIRNAME) + sep
+  ).normalize('NFC')
+}
+
+/**
+ * Get the shared memory path (common to all branches).
+ * Used for cross-branch shared memories.
+ */
+export function getSharedMemoryPath(): string {
+  const override = getAutoMemPathOverride() ?? getAutoMemPathSetting()
+  if (override) {
+    return join(override, 'shared') + sep
+  }
+  const projectsDir = join(getMemoryBaseDir(), 'projects')
+  return (
+    join(projectsDir, sanitizePath(getAutoMemBase()), 'shared', AUTO_MEM_DIRNAME) + sep
+  ).normalize('NFC')
+}
+
+/**
+ * List all available branch memory directories for the current project.
+ * Returns array of branch names that have memory data.
+ */
+export async function listBranchMemories(): Promise<string[]> {
+  const fs = getFsImplementation()
+  const override = getAutoMemPathOverride() ?? getAutoMemPathSetting()
+  const baseDir = override
+    ? join(override, 'branches')
+    : join(getMemoryBaseDir(), 'projects', sanitizePath(getAutoMemBase()), 'branches')
+
+  try {
+    const entries = await fs.readdir(baseDir, { withFileTypes: true })
+    return entries
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name.replace(/--/g, '/')) // Restore / in branch names
+  } catch {
+    return []
+  }
 }

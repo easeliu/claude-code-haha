@@ -924,3 +924,28 @@ export function isCurrentDirectoryBareGitRepo(): boolean {
   return false
 }
 /* eslint-enable custom-rules/no-sync-fs */
+
+/**
+ * Get the current git branch name synchronously.
+ * Returns null if not in a git repo, on detached HEAD, or if git is unavailable.
+ *
+ * Uses execFileNoThrow for sync execution without subprocess overhead.
+ */
+export function getCurrentBranchSync(): string | null {
+  try {
+    const { stdout, code } = execFileNoThrow('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd: getCwd(),
+    })
+    if (code !== 0 || !stdout) {
+      return null
+    }
+    const trimmed = stdout.trim()
+    // HEAD means detached HEAD state
+    if (trimmed === 'HEAD' || trimmed === '') {
+      return null
+    }
+    return trimmed
+  } catch {
+    return null
+  }
+}
