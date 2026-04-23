@@ -229,7 +229,7 @@ export function hasAutoMemPathOverride(): boolean {
  * same repo share one auto-memory directory (anthropics/claude-code#24382).
  */
 function getAutoMemBase(): string {
-  return findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot
+  return findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot()
 }
 
 /**

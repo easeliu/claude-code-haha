@@ -46,6 +46,7 @@ import { formatDuration, formatNumber } from './utils/format.js'
 import type { FpsMetrics } from './utils/fpsTracker.js'
 import { getCanonicalName } from './utils/model/model.js'
 import { calculateUSDCost } from './utils/modelCost.js'
+import { recordTokenUsageIncremental } from './utils/dailyTokenTracker.js'
 export {
   getTotalCostUSD as getTotalCost,
   getTotalDuration,
@@ -298,6 +299,15 @@ export function addToTotalSessionCost(
   getTokenCounter()?.add(usage.cache_creation_input_tokens ?? 0, {
     ...attrs,
     type: 'cacheCreation',
+  })
+
+  // Record token usage incrementally after each API call
+  void recordTokenUsageIncremental({
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+    costUSD: cost,
   })
 
   let totalCost = cost

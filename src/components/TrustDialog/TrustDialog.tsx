@@ -196,6 +196,8 @@ export function TrustDialog(t0) {
     t15 = $[19];
   }
   useKeybinding("confirm:no", _temp7, t15);
+  // Fast-path: if trust dialog already accepted, auto-resolve immediately
+  // This check happens after onChange is defined to ensure proper closure capture
   if (hasTrustDialogAccepted) {
     setTimeout(onDone);
     return null;

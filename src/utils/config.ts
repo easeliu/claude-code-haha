@@ -1168,6 +1168,8 @@ function saveConfigWithLock<A extends object>(
     const startTime = Date.now()
     release = lockfile.lockSync(file, {
       lockfilePath: lockFilePath,
+      timeout: 5000, // 5 秒超时，防止在 Windows 上无限期卡住
+      stale: 10000, // 10 秒后视为 stale 锁，可被覆盖
       onCompromised: err => {
         // Default onCompromised throws from a setTimeout callback, which
         // becomes an unhandled exception. Log instead -- the lock being

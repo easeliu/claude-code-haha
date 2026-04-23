@@ -309,6 +309,11 @@ function simpleHash(str: string): string {
  * @returns A safe name (e.g., '-Users-foo-my-project' or 'plugin-name-server')
  */
 export function sanitizePath(name: string): string {
+  // Defensive check: name should always be a string, but guard against undefined/null
+  if (typeof name !== 'string') {
+    console.warn(`[sanitizePath] Expected string, got ${typeof name}: ${name}`)
+    name = String(name ?? 'unknown')
+  }
   const sanitized = name.replace(/[^a-zA-Z0-9]/g, '-')
   if (sanitized.length <= MAX_SANITIZED_LENGTH) {
     return sanitized

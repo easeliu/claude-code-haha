@@ -26,11 +26,11 @@ import { editFileInEditor } from '../../utils/promptEditor.js';
  *   /memory list               - List available branch memories
  *   /memory current-branch     - Show current branch memory path
  */
-function parseMemoryArgs(args: string): {
+function parseMemoryArgs(args: unknown): {
   command: 'edit' | 'read-from' | 'list' | 'current-branch';
   value?: string;
 } {
-  const trimmed = args.trim()
+  const trimmed = (typeof args === 'string' ? args : '').trim()
   if (!trimmed) {
     return { command: 'edit' }
   }

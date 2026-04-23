@@ -252,6 +252,137 @@ export async function recordDailyTokenUsage(): Promise<void> {
 }
 
 /**
+ * Record token usage incrementally after each API call
+ * This allows /token today to show real-time usage without waiting for session end
+ */
+let lastRecordedTokens = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  costUSD: 0,
+}
+
+export function resetLastRecordedTokens(): void {
+  lastRecordedTokens = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    costUSD: 0,
+  }
+}
+
+export async function recordTokenUsageIncremental(
+  delta: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    costUSD: number
+  },
+): Promise<void> {
+  try {
+    const logDir = getTokenLogDir()
+    const logPath = getTodayLogPath()
+
+    // Ensure directory exists
+    await mkdir(logDir, { recursive: true })
+
+    // Read existing log or create new one
+    let content = ''
+    try {
+      content = await readFile(logPath, 'utf-8')
+    } catch (e: unknown) {
+      const code = (e as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT') {
+        throw e
+      }
+    }
+
+    const { summary, entries } = parseLogFile(content)
+
+    const now = new Date().toISOString()
+    const today = now.split('T')[0]
+
+    let newSummary: DailyTokenLog
+    if (summary && summary.date === today) {
+      // Update existing summary with delta
+      newSummary = {
+        ...summary,
+        inputTokens: summary.inputTokens + delta.inputTokens,
+        outputTokens: summary.outputTokens + delta.outputTokens,
+        cacheReadTokens: summary.cacheReadTokens + delta.cacheReadTokens,
+        cacheCreationTokens: summary.cacheCreationTokens + delta.cacheCreationTokens,
+        totalTokens: summary.totalTokens + delta.inputTokens + delta.outputTokens + delta.cacheReadTokens + delta.cacheCreationTokens,
+        costUSD: summary.costUSD + delta.costUSD,
+        lastUpdated: now,
+      }
+    } else {
+      // Create new summary
+      newSummary = {
+        date: today,
+        inputTokens: delta.inputTokens,
+        outputTokens: delta.outputTokens,
+        cacheReadTokens: delta.cacheReadTokens,
+        cacheCreationTokens: delta.cacheCreationTokens,
+        totalTokens: delta.inputTokens + delta.outputTokens + delta.cacheReadTokens + delta.cacheCreationTokens,
+        costUSD: delta.costUSD,
+        sessions: 0, // Will be incremented at session end
+        lastUpdated: now,
+      }
+    }
+
+    // Add entry for this API call
+    entries.push({
+      timestamp: now,
+      inputTokens: delta.inputTokens,
+      outputTokens: delta.outputTokens,
+      cacheReadTokens: delta.cacheReadTokens,
+      cacheCreationTokens: delta.cacheCreationTokens,
+      costUSD: delta.costUSD,
+    })
+
+    // Keep only last 100 entries to avoid huge files
+    const trimmedEntries = entries.slice(-100)
+
+    // Write updated log
+    const newContent = generateLogFileContent(newSummary, trimmedEntries)
+    await writeFile(logPath, newContent, 'utf-8')
+
+    // Update last recorded tokens
+    lastRecordedTokens.inputTokens += delta.inputTokens
+    lastRecordedTokens.outputTokens += delta.outputTokens
+    lastRecordedTokens.cacheReadTokens += delta.cacheReadTokens
+    lastRecordedTokens.cacheCreationTokens += delta.cacheCreationTokens
+    lastRecordedTokens.costUSD += delta.costUSD
+
+  } catch (error) {
+    // Silently fail - token logging is non-critical
+    console.error('[DailyTokenTracker] Failed to record incremental token usage:', error)
+  }
+}
+
+/**
+ * Get tokens that haven't been recorded yet (for session-end recording)
+ */
+export function getUnrecordedTokens(): {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  costUSD: number
+} {
+  return {
+    inputTokens: getTotalInputTokens() - lastRecordedTokens.inputTokens,
+    outputTokens: getTotalOutputTokens() - lastRecordedTokens.outputTokens,
+    cacheReadTokens: getTotalCacheReadInputTokens() - lastRecordedTokens.cacheReadTokens,
+    cacheCreationTokens: getTotalCacheCreationInputTokens() - lastRecordedTokens.cacheCreationTokens,
+    costUSD: getTotalCostUSD() - lastRecordedTokens.costUSD,
+  }
+}
+
+/**
  * Get today's token usage summary for display
  */
 export async function getTodayTokenSummary(): Promise<{
