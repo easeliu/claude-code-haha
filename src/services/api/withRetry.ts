@@ -52,6 +52,7 @@ const abortError = () => new APIUserAbortError()
 const DEFAULT_MAX_RETRIES = 10
 const FLOOR_OUTPUT_TOKENS = 3000
 const MAX_529_RETRIES = 3
+const MAX_401_RETRIES = 2
 export const BASE_DELAY_MS = 500
 
 // Foreground query sources where the user IS blocking on the result — these
@@ -184,6 +185,7 @@ export async function* withRetry<T>(
   }
   let client: Anthropic | null = null
   let consecutive529Errors = options.initialConsecutive529Errors ?? 0
+  let consecutive401Errors = 0
   let lastError: unknown
   let persistentAttempt = 0
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
@@ -362,6 +364,29 @@ export async function* withRetry<T>(
             )
           }
         }
+      }
+
+      // Track consecutive 401 errors — fast fail after MAX_401_RETRIES
+      // to avoid waiting for maxRetries (10) when API key is permanently invalid.
+      if (error instanceof APIError && error.status === 401) {
+        consecutive401Errors++
+        if (consecutive401Errors >= MAX_401_RETRIES) {
+          // Check if fallback model is specified
+          if (options.fallbackModel) {
+            logEvent('tengu_api_fallback_triggered', {
+              original_model:
+                options.model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+              fallback_model:
+                options.fallbackModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+              provider: getAPIProviderForStatsig(),
+            })
+            throw new FallbackTriggeredError(options.model, options.fallbackModel)
+          }
+          // No fallback — fail fast instead of continuing to retry
+          throw new CannotRetryError(error, retryContext)
+        }
+      } else {
+        consecutive401Errors = 0
       }
 
       // Only retry if the error indicates we should

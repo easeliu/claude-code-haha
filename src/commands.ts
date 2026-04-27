@@ -19,6 +19,7 @@ import cost from './commands/cost/index.js'
 import diff from './commands/diff/index.js'
 import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
+import dsp from './commands/dsp/index.js'
 import memory from './commands/memory/index.js'
 import help from './commands/help/index.js'
 import ide from './commands/ide/index.js'
@@ -39,6 +40,8 @@ import rename from './commands/rename/index.js'
 import resume from './commands/resume/index.js'
 import review, { ultrareview } from './commands/review.js'
 import session from './commands/session/index.js'
+import switchCmd from './commands/switch/index.js'
+import deepseekCmd from './commands/deepseek/index.js'
 import share from './commands/share/index.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
@@ -274,6 +277,7 @@ const COMMANDS = memoize((): Command[] => [
   cost,
   diff,
   doctor,
+  dsp,
   effort,
   exit,
   fast,
@@ -300,6 +304,8 @@ const COMMANDS = memoize((): Command[] => [
   session,
   skills,
   stats,
+  switchCmd,
+  deepseekCmd,
   status,
   statusline,
   stickers,
